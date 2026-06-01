@@ -1,0 +1,206 @@
+---
+title: "ADMIXTURE Tutorial"
+author: "Rafael D. Lima"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+**ADMIXTURE** is a software tool for maximum likelihood estimation of individual ancestries from multilocus SNP data. It relies on the same population genetics model as the popular software *STRUCTURE*, which models deviations from Hardy-Weinberg and linkage equilibrium to find population groupings that are not in disequilibrium. In contrast with *STRUCTURE*, which uses a computationally intensive Bayesian algorithm, *ADMIXTURE* employs a highly optimized numerical algorithm that makes it incredibly fast and capable of handling larger genomic datasets with much less computational power. For more information, see:
+
+> Alexander, D. H., Novembre, J., & Lange, K. (2009). Fast model-based estimation of ancestry in unrelated individuals. *Genome Research* 19: 1655-1664. <https://doi.org/10.1101/gr.094052.109>
+
+This tutorial walks through a pipeline for running *ADMIXTURE* using a command-line interface.
+
+------------------------------------------------------------------------
+
+## 1. Downloading and installing software
+
+To run these programs from any directory on your computer, manually download their pre-compiled binaries and use the terminal to move them to your system's global binary folder (`/usr/local/bin`).
+
+### Download the binaries
+
+1.  **ADMIXTURE:** Go to the [ADMIXTURE Download Page](https://dalexander.github.io/admixture/download.html) and download the appropriate file for your operating system (Linux or macOS).
+2.  **PLINK (v1.9):** Go to the [PLINK 1.9 Download Page](https://www.cog-genomics.org/plink/1.9/) and download the appropriate file for your operating system.
+
+### Move to the global bin
+
+Open your terminal, navigate to your Downloads folder, extract the files, and move the executable programs to `/usr/local/bin`.
+
+*(Note: The exact filenames below might vary slightly depending on your OS and the version you downloaded).*
+
+```{bash, eval=FALSE}
+# Navigate to your Downloads folder
+cd ~/Downloads
+
+# Extract the ADMIXTURE tarball
+tar -xvf admixture_linux-1.3.0.tar.gz
+
+# Move the admixture executable to your global bin (requires admin password)
+sudo mv admixture_linux-1.3.0/admixture /usr/local/bin/
+
+# Unzip the PLINK file into a new folder
+unzip plink_linux_x86_64_20231018.zip -d plink_folder
+
+# Move the plink executable to your global bin
+sudo mv plink_folder/plink /usr/local/bin/
+```
+
+Verify that both installed correctly by checking their versions from your home directory.
+
+```{bash, eval=FALSE}
+admixture --version
+plink --version
+```
+
+------------------------------------------------------------------------
+
+## 2. Setting up the workspace
+
+Create a dedicated directory for the ADMIXTURE files to keep them separate from your raw data.
+
+```{bash, eval=FALSE}
+# Create the analysis directory
+mkdir admixture_analysis
+
+# Move into the new directory
+cd admixture_analysis
+```
+
+------------------------------------------------------------------------
+
+## 3. Preparing inputs for ADMIXTURE
+
+ADMIXTURE cannot read VCF files directly. It requires inputs in PLINK's binary format (`.bed`, `.bim`, `.fam`). We use PLINK to convert an SNP dataset in VCF format into these required files.
+
+*(Note: You must use unlinked SNP data, as ADMIXTURE assumes linkage equilibrium to infer population structure).*
+
+Assuming your VCF file is named `unlinked_snps.vcf` and is located in a parent `data` folder:
+
+```{bash, eval=FALSE}
+# Convert VCF to PLINK format
+plink --vcf ../data/unlinked_snps.vcf --double-id --allow-extra-chr --make-bed --out snps_to_admixture
+```
+
+**Understanding the PLINK parameters:**
+
+- `--vcf`: Specifies the path to your input VCF file.
+- `--double-id`: VCF files typically contain one ID per sample, but PLINK strictly requires a "Family ID" and a "Within-Family ID". This flag tells PLINK to duplicate your sample name into both columns so it doesn't crash.
+- `--allow-extra-chr`: PLINK expects human chromosome names (1-22) by default. For non-model organisms, this flag forces PLINK to accept arbitrary scaffold/contig names.
+- `--make-bed`: Instructs PLINK to output the binary file trio (`.bed`, `.bim`, `.fam`).
+- `--out`: Specifies the prefix name for the output files.
+
+### Fixing the chromosome names
+
+While PLINK accepts non-human scaffold names (like `uce_1425`), ADMIXTURE has a strict parser that expects chromosome names to be numeric. If it sees text in the chromosome column of the `.bim` file, it will instantly crash. To bypass this, we use `awk` to overwrite the first column of the `.bim` file with `1`.
+
+Because ADMIXTURE treats all SNPs as unlinked independent markers anyway, tricking it into thinking all SNPs belong to a single "Chromosome 1" does not affect the mathematical outcome of the model.
+
+```{bash, eval=FALSE}
+# Strip out the scaffold names and replace the first column with "1"
+cut -f2- snps_to_admixture.bim > temp
+awk 'BEGIN{FS=OFS="\t"}{print "1" OFS $0}' temp > snps_to_admixture.bim
+
+# Remove the temporary file
+rm temp
+
+# Check whether all files (.bed, .bim, .fam) were created successfully
+ls
+```
+
+------------------------------------------------------------------------
+
+## 4. Running ADMIXTURE: The simple way
+
+If you want to quickly test the data and verify that ADMIXTURE runs properly, you can use a simple `for` loop directly in your terminal. This loop will run ADMIXTURE once for each value of *K*.
+
+```{bash, eval=FALSE}
+# Run K=1 through K=10 
+for K in 1 2 3 4 5 6 7 8 9 10; do 
+    admixture --cv -j8 snps_to_admixture.bed $K | tee log_K${K}.out
+done
+```
+
+**Understanding the ADMIXTURE parameters:**
+
+- `--cv`: Computes the Cross-Validation error. This number is crucial for determining which value of *K* best fits your data (the lower the CV error, the better the model fit).
+- `-j8`: Enables multi-threading. This example uses 8 CPU cores. Adjust this number based on your computer's specifications to speed up the run.
+- `tee`: A Bash command that splits the output, displaying it on your screen while simultaneously saving it to a log file (`log_K{K}.out`).
+
+This simple method is fast but is not the most thorough. ADMIXTURE is stochastic, meaning a single run might get trapped in a local likelihood optimum. Therefore, for publication-quality results, we must run multiple independent replicates.
+
+------------------------------------------------------------------------
+
+## 5. Running ADMIXTURE: The best way
+
+To ensure robust results, we will write a Bash script (`.sh`) that automates a highly replicated pipeline. This script will run 20 independent replicates for each *K* value, assign unique random seeds to each replicate, and automatically extract the cross-validation (CV) errors into a summary file.
+
+### Creating the script
+
+Open a text editor (like RStudio or a terminal editor like `nano`) and create a file named `run_admixture.sh` inside your analysis directory. Paste the following code into the file:
+
+```{bash, eval=FALSE}
+#!/bin/bash
+
+## ADMIXTURE Analysis ##
+
+# Loop through K = 1 to 10
+for K in {1..10}; do
+
+  # For each K, run 20 independent replicates to check convergence
+  for rep in {1..20}; do
+  
+    # Dynamically generate a distinct random seed for each replicate
+    SEED=$(( (K * 100) + rep ))
+    
+    echo "Processing: K = ${K} | Replicate = ${rep} | Seed = ${SEED}..."
+    
+    # Run admixture with cross-validation (--cv), using 8 CPU threads (-j8)
+    # Pass the dynamic SEED (-s) to the command
+    admixture --cv -j8 -s ${SEED} snps_to_admixture.bed $K | tee log_K${K}_rep${rep}.out
+    
+    # Immediately rename the generated output matrices so they aren't overwritten
+    mv snps_to_admixture.${K}.Q snps_to_admixture_K${K}_rep${rep}.Q
+    mv snps_to_admixture.${K}.P snps_to_admixture_K${K}_rep${rep}.P
+    
+    echo "Completed K=${K} Rep=${rep}"
+  done
+
+done
+
+echo "================================"
+echo "All runs completed successfully."
+echo "================================"
+
+# Generate summary file by extracting the CV error from all log files
+grep -h CV log*.out | sort -V > cv_summary.txt
+
+echo "CV summary saved to cv_summary.txt"
+```
+
+**Additional parameter in this script:**
+
+- `-s ${SEED}`: Manually sets the random seed used to initiate the algorithm. By feeding it a specific seed, we ensure that the run is 100% reproducible if we ever need to run it again, while guaranteeing that each of our 20 replicates starts from a unique starting position.
+
+### Executing the script
+
+Before you can run the script, you must grant it execution permissions from the terminal.
+
+```{bash, eval=FALSE}
+# Make the script executable
+chmod +x run_admixture.sh
+
+# Run the script
+./run_admixture.sh
+```
+
+Once the script finishes, you can use the output files to find the replicate runs with the lowest CV errors and generate plots in R.
