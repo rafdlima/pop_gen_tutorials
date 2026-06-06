@@ -11,7 +11,7 @@
 
 <meta name="author" content="Rafael D. Lima" />
 
-<meta name="date" content="2026-06-01" />
+<meta name="date" content="2026-06-06" />
 
 <title>ADMIXTURE Tutorial</title>
 
@@ -1499,7 +1499,7 @@ border-radius: 0px;
 
 <h1 class="title toc-ignore">ADMIXTURE Tutorial</h1>
 <h4 class="author">Rafael D. Lima</h4>
-<h4 class="date">2026-06-01</h4>
+<h4 class="date">2026-06-06</h4>
 
 </div>
 
@@ -1586,10 +1586,11 @@ cd admixture_analysis</code></pre>
 PLINK’s binary format (<code>.bed</code>, <code>.bim</code>,
 <code>.fam</code>). We use PLINK to convert an SNP dataset in VCF format
 into these required files.</p>
-<p><em>(Note: You must use unlinked SNP data, as ADMIXTURE assumes
-linkage equilibrium to infer population structure).</em></p>
-<p>Assuming your VCF file is named <code>unlinked_snps.vcf</code> and is
-located in a parent <code>data</code> folder:</p>
+<p>Note that you must replace <code>../data/unlinked_snps.vcf</code>
+with the actual path and file name of your own VCF file. You must also
+replace <code>snps_to_admixture</code> with whatever name you want to
+call your new files. You must use this exact same name throughout the
+rest of the tutorial.</p>
 <pre class="bash"><code># Convert VCF to PLINK format
 plink --vcf ../data/unlinked_snps.vcf --double-id --allow-extra-chr --make-bed --out snps_to_admixture</code></pre>
 <p><strong>Understanding the PLINK parameters:</strong></p>
@@ -1619,6 +1620,10 @@ we use <code>awk</code> to overwrite the first column of the
 anyway, tricking it into thinking all SNPs belong to a single
 “Chromosome 1” does not affect the mathematical outcome of the
 model.</p>
+<p><em>(Note: If you used a different prefix than
+<code>snps_to_admixture</code> in the previous step, make sure you
+change it in the code below so you are modifying the correct
+files!).</em></p>
 <pre class="bash"><code># Strip out the scaffold names and replace the first column with &quot;1&quot;
 cut -f2- snps_to_admixture.bim &gt; temp
 awk &#39;BEGIN{FS=OFS=&quot;\t&quot;}{print &quot;1&quot; OFS $0}&#39; temp &gt; snps_to_admixture.bim
@@ -1672,9 +1677,18 @@ the cross-validation (CV) errors into a summary file.</p>
 <code>nano</code>) and create a file named <code>run_admixture.sh</code>
 inside your analysis directory. Paste the following code into the
 file:</p>
+<p>WARNING: In the script below, the <code>INPUT</code> variable is set
+to <code>&quot;snps_to_admixture&quot;</code>. If you used a different
+<code>--out</code> prefix during the PLINK step, you must change this
+variable to match your prefix exactly! If they do not match, ADMIXTURE
+will fail with an “Error opening .bim file” message and produce no
+output.</p>
 <pre class="bash"><code>#!/bin/bash
 
 ## ADMIXTURE Analysis ##
+
+# Define the exact prefix of your .bed/.bim/.fam files
+INPUT=&quot;snps_to_admixture&quot;
 
 # Loop through K = 1 to 10
 for K in {1..10}; do
@@ -1689,11 +1703,11 @@ for K in {1..10}; do
     
     # Run admixture with cross-validation (--cv), using 8 CPU threads (-j8)
     # Pass the dynamic SEED (-s) to the command
-    admixture --cv -j8 -s ${SEED} snps_to_admixture.bed $K | tee log_K${K}_rep${rep}.out
+    admixture --cv -j8 -s ${SEED} ${INPUT}.bed $K | tee log_K${K}_rep${rep}.out
     
     # Immediately rename the generated output matrices so they aren&#39;t overwritten
-    mv snps_to_admixture.${K}.Q snps_to_admixture_K${K}_rep${rep}.Q
-    mv snps_to_admixture.${K}.P snps_to_admixture_K${K}_rep${rep}.P
+    mv ${INPUT}.${K}.Q ${INPUT}_K${K}_rep${rep}.Q
+    mv ${INPUT}.${K}.P ${INPUT}_K${K}_rep${rep}.P
     
     echo &quot;Completed K=${K} Rep=${rep}&quot;
   done
