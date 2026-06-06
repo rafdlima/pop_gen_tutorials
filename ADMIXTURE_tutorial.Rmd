@@ -21,7 +21,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 This tutorial walks through a pipeline for running *ADMIXTURE* using a command-line interface.
 
-------------------------------------------------------------------------
+---
 
 ## 1. Downloading and installing software
 
@@ -62,7 +62,7 @@ admixture --version
 plink --version
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 2. Setting up the workspace
 
@@ -76,15 +76,13 @@ mkdir admixture_analysis
 cd admixture_analysis
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 3. Preparing inputs for ADMIXTURE
 
 ADMIXTURE cannot read VCF files directly. It requires inputs in PLINK's binary format (`.bed`, `.bim`, `.fam`). We use PLINK to convert an SNP dataset in VCF format into these required files.
 
-*(Note: You must use unlinked SNP data, as ADMIXTURE assumes linkage equilibrium to infer population structure).*
-
-Assuming your VCF file is named `unlinked_snps.vcf` and is located in a parent `data` folder:
+Note that you must replace `../data/unlinked_snps.vcf` with the actual path and file name of your own VCF file. You must also replace `snps_to_admixture` with whatever name you want to call your new files. You must use this exact same name throughout the rest of the tutorial.
 
 ```{bash, eval=FALSE}
 # Convert VCF to PLINK format
@@ -105,6 +103,9 @@ While PLINK accepts non-human scaffold names (like `uce_1425`), ADMIXTURE has a 
 
 Because ADMIXTURE treats all SNPs as unlinked independent markers anyway, tricking it into thinking all SNPs belong to a single "Chromosome 1" does not affect the mathematical outcome of the model.
 
+*(Note: If you used a different prefix than `snps_to_admixture` in the previous step, make sure you change it in the code below so you are modifying the correct files!).*
+
+
 ```{bash, eval=FALSE}
 # Strip out the scaffold names and replace the first column with "1"
 cut -f2- snps_to_admixture.bim > temp
@@ -117,7 +118,7 @@ rm temp
 ls
 ```
 
-------------------------------------------------------------------------
+---
 
 ## 4. Running ADMIXTURE: The simple way
 
@@ -138,7 +139,7 @@ done
 
 This simple method is fast but is not the most thorough. ADMIXTURE is stochastic, meaning a single run might get trapped in a local likelihood optimum. Therefore, for publication-quality results, we must run multiple independent replicates.
 
-------------------------------------------------------------------------
+---
 
 ## 5. Running ADMIXTURE: The best way
 
@@ -148,10 +149,15 @@ To ensure robust results, we will write a Bash script (`.sh`) that automates a h
 
 Open a text editor (like RStudio or a terminal editor like `nano`) and create a file named `run_admixture.sh` inside your analysis directory. Paste the following code into the file:
 
+WARNING: In the script below, the `INPUT` variable is set to `"snps_to_admixture"`. If you used a different `--out` prefix during the PLINK step, you must change this variable to match your prefix exactly! If they do not match, ADMIXTURE will fail with an "Error opening .bim file" message and produce no output.
+
 ```{bash, eval=FALSE}
 #!/bin/bash
 
 ## ADMIXTURE Analysis ##
+
+# Define the exact prefix of your .bed/.bim/.fam files
+INPUT="snps_to_admixture"
 
 # Loop through K = 1 to 10
 for K in {1..10}; do
@@ -166,11 +172,11 @@ for K in {1..10}; do
     
     # Run admixture with cross-validation (--cv), using 8 CPU threads (-j8)
     # Pass the dynamic SEED (-s) to the command
-    admixture --cv -j8 -s ${SEED} snps_to_admixture.bed $K | tee log_K${K}_rep${rep}.out
+    admixture --cv -j8 -s ${SEED} ${INPUT}.bed $K | tee log_K${K}_rep${rep}.out
     
     # Immediately rename the generated output matrices so they aren't overwritten
-    mv snps_to_admixture.${K}.Q snps_to_admixture_K${K}_rep${rep}.Q
-    mv snps_to_admixture.${K}.P snps_to_admixture_K${K}_rep${rep}.P
+    mv ${INPUT}.${K}.Q ${INPUT}_K${K}_rep${rep}.Q
+    mv ${INPUT}.${K}.P ${INPUT}_K${K}_rep${rep}.P
     
     echo "Completed K=${K} Rep=${rep}"
   done
